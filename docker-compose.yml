@@ -1,0 +1,20 @@
+# The model server sits on an INTERNAL network: it has no route to the internet.
+# Load model weights once (offline import or a temporary pull), then keep the network internal.
+services:
+  llm:
+    image: ollama/ollama
+    volumes: ["./models:/root/.ollama"]
+    networks: [ai_internal]
+    # add GPU access here if the hospital server has one
+  gateway:
+    build: .
+    environment:
+      MEDILINK_LLM_URL: http://llm:11434
+      MEDILINK_LLM_MODEL: ${MEDILINK_LLM_MODEL:-your-approved-model}
+      MEDILINK_ALLOWED_HOSTS: llm
+    volumes: ["./knowledge:/app/knowledge", "./data:/app/data"]
+    ports: ["8088:8088"]
+    networks: [ai_internal, hospital_lan]
+networks:
+  ai_internal: { internal: true }
+  hospital_lan: {}
