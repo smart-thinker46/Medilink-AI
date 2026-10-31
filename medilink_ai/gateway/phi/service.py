@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 from ..models import AICapability
+from ..context.models import ContextAccessStatus, ValidatedRequestContext
 from .detector import PHIDetector
 from .exceptions import PHIDetectionError, PHIMinimizationError, PHIPolicyViolation
 from .inspector import PHIInspector
 from .minimizer import PHIMinimizer
 from .models import AIContextField, PHILevel, PHIProcessingDecision, PHIType, ProtectedAIContext, ProtectedText
 from .policy import get_phi_policy
+from .policies import get_phi_policy as get_projection_policy
+from .provider import HMISPHIDataProvider, PHIQueryInspector
+from .minimizer import minimize_projection
+from .validator import validate_protected_context
+from .models import PHIHandlingDecision, ProtectedAIContext
+from .exceptions import PHIDataProviderUnavailableError, PHIQueryInspectionError, PHIValidationError
+import secrets
 
 
 class PHIProtectionService:
@@ -17,10 +25,59 @@ class PHIProtectionService:
         PHIType.PATIENT_ID, PHIType.MEDICAL_RECORD_NUMBER, PHIType.ENCOUNTER_ID,
     })
 
-    def __init__(self, detector: PHIDetector | None = None, minimizer: PHIMinimizer | None = None, inspector: PHIInspector | None = None):
+    def __init__(self, detector: PHIDetector | None = None, minimizer: PHIMinimizer | None = None, inspector: PHIInspector | None = None, *, provider: HMISPHIDataProvider | None = None, query_inspector: PHIQueryInspector | None = None):
         self.detector = detector or PHIDetector()
         self.minimizer = minimizer or PHIMinimizer()
         self.inspector = inspector or PHIInspector(self.detector)
+        self.provider = provider
+        self.query_inspector = query_inspector
+
+    async def protect_context(self, *, context: ValidatedRequestContext, capability: str, query: str, purpose: str) -> ProtectedAIContext:
+        """Build the only context shape permitted to reach inference."""
+        policy = get_projection_policy(capability)
+        if not isinstance(context, ValidatedRequestContext):
+            raise PHIValidationError("Validated HMIS context is required.")
+        if policy.requires_patient_context and (context.patient is None or context.patient_access is None or context.patient_access.status != ContextAccessStatus.ALLOWED):
+            raise PHIValidationError("Authorized patient context is required.")
+        if policy.requires_encounter_context and (context.encounter is None or context.encounter_access is None or context.encounter_access.status != ContextAccessStatus.ALLOWED):
+            raise PHIValidationError("Authorized encounter context is required.")
+        if self.query_inspector is None:
+            raise PHIQueryInspectionError("A trusted PHI query inspector is required.")
+        try:
+            protected_query = await self.query_inspector.inspect_query(query=query or "", capability=policy.capability, purpose=purpose)
+        except Exception as exc:
+            raise PHIQueryInspectionError("The request query could not be inspected safely.") from exc
+        if not isinstance(protected_query, str):
+            raise PHIQueryInspectionError("The request query inspector returned an invalid result.")
+        needs_patient_projection = bool(policy.allowed_patient_fields and context.patient is not None)
+        needs_encounter_projection = bool(policy.allowed_encounter_fields and context.encounter is not None)
+        if (needs_patient_projection or needs_encounter_projection) and self.provider is None:
+            raise PHIDataProviderUnavailableError("An HMIS PHI data provider is required for this capability.")
+        patient_data: dict = {}
+        encounter_data: dict = {}
+        try:
+            if needs_patient_projection:
+                patient_data = minimize_projection(await self.provider.fetch_patient_projection(context=context, allowed_fields=policy.allowed_patient_fields), policy.allowed_patient_fields, policy.maximum_field_characters)
+            if needs_encounter_projection:
+                encounter_data = minimize_projection(await self.provider.fetch_encounter_projection(context=context, allowed_fields=policy.allowed_encounter_fields), policy.allowed_encounter_fields, policy.maximum_field_characters)
+        except PHIValidationError:
+            raise
+        except Exception as exc:
+            raise PHIDataProviderUnavailableError("The HMIS PHI provider could not be queried safely.") from exc
+        result = ProtectedAIContext(
+            organization_id=context.organization_id, facility_id=context.facility_id, department_id=context.department_id,
+            capability=policy.capability, purpose=purpose.strip(), query=protected_query,
+            patient_reference=secrets.token_urlsafe(12) if patient_data else None,
+            encounter_reference=secrets.token_urlsafe(12) if encounter_data else None,
+            patient_data=patient_data, encounter_data=encounter_data,
+            included_patient_fields=tuple(sorted(patient_data)), included_encounter_fields=tuple(sorted(encounter_data)),
+            decision=PHIHandlingDecision.ALLOWED, human_review_required=policy.human_review_required,
+        )
+        validate_protected_context(policy=policy, context=result)
+        return result
+
+    async def protect(self, *, principal, request, validated_context):
+        return await self.protect_context(context=validated_context, capability=request.capability.value, query=request.query or "", purpose=request.purpose or "")
 
     def evaluate(self, capability: AICapability, text: str) -> PHIProcessingDecision:
         try:

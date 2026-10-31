@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from typing import Any, Mapping
+
 from ..models import AICapability
 
 
@@ -64,3 +66,24 @@ class ModelRoutingDecision:
     model: ModelDefinition | None = None
     reason_code: str = "NONE"
     fallback_used: bool = False
+
+
+@dataclass(frozen=True)
+class ProtectedModelInput:
+    capability: str
+    purpose: str
+    query: str
+    patient_reference: str | None
+    encounter_reference: str | None
+    patient_data: Mapping[str, Any]
+    encounter_data: Mapping[str, Any]
+    human_review_required: bool
+
+    @classmethod
+    def from_protected_context(cls, context):
+        from ..phi.models import ProtectedAIContext
+        if not isinstance(context, ProtectedAIContext):
+            raise TypeError("A validated ProtectedAIContext is required.")
+        return cls(context.capability, context.purpose, context.query, context.patient_reference,
+                   context.encounter_reference, dict(context.patient_data), dict(context.encounter_data),
+                   context.human_review_required)

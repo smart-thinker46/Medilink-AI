@@ -3,7 +3,7 @@ from __future__ import annotations
 from ..models import AuthenticatedPrincipal
 from ..schemas import GatewayRequest
 from .exceptions import ContextValidationError
-from .models import EncounterContextRecord, PatientContextRecord
+from .models import DepartmentContextRecord, EncounterContextRecord, PatientContextRecord, ValidatedRequestContext
 
 
 class GatewayContextValidator:
@@ -49,3 +49,51 @@ class GatewayContextValidator:
             raise ContextValidationError("The supplied context could not be validated.", "ENCOUNTER_ORGANIZATION_MISMATCH")
         if encounter.facility_id != request.facility_id:
             raise ContextValidationError("The supplied context could not be validated.", "ENCOUNTER_FACILITY_MISMATCH")
+
+    @staticmethod
+    def validate_department_record(principal: AuthenticatedPrincipal, request: GatewayRequest, department: DepartmentContextRecord | None) -> None:
+        if not request.department_id:
+            return
+        if department is None:
+            raise ContextValidationError("The supplied context could not be validated.", "DEPARTMENT_NOT_FOUND")
+        if department.department_id != request.department_id:
+            raise ContextValidationError("The supplied context could not be validated.", "DEPARTMENT_NOT_FOUND")
+        if department.organization_id != principal.organization_id:
+            raise ContextValidationError("The supplied context could not be validated.", "DEPARTMENT_ORGANIZATION_MISMATCH")
+        if department.facility_id != request.facility_id:
+            raise ContextValidationError("The supplied context could not be validated.", "DEPARTMENT_FACILITY_MISMATCH")
+
+
+def validate_context_records(*, principal: AuthenticatedPrincipal, request: GatewayRequest,
+                             patient: PatientContextRecord | None,
+                             encounter: EncounterContextRecord | None,
+                             department: DepartmentContextRecord | None = None,
+                             patient_access_verified: bool = False,
+                             encounter_access_verified: bool = False) -> ValidatedRequestContext:
+    """Validate resolved records and return a canonical, trusted context."""
+    GatewayContextValidator.validate_principal_facility(principal, request.facility_id)
+    if request.patient_id:
+        if patient is None:
+            raise ContextValidationError("The supplied context could not be validated.", "PATIENT_NOT_FOUND")
+        GatewayContextValidator.validate_patient_ownership(principal, request, patient)
+        if not patient_access_verified:
+            raise ContextValidationError("The supplied context could not be validated.", "PATIENT_ACCESS_DENIED")
+    if request.encounter_id:
+        if encounter is None:
+            raise ContextValidationError("The supplied context could not be validated.", "ENCOUNTER_NOT_FOUND")
+        GatewayContextValidator.validate_encounter_ownership(principal, request, encounter, patient)
+        if not encounter_access_verified:
+            raise ContextValidationError("The supplied context could not be validated.", "ENCOUNTER_ACCESS_DENIED")
+    GatewayContextValidator.validate_department(principal, request, encounter)
+    GatewayContextValidator.validate_department_record(principal, request, department)
+    if not request.purpose or not request.purpose.strip():
+        raise ContextValidationError("The supplied context could not be validated.", "PURPOSE_REQUIRED")
+    return ValidatedRequestContext(
+        organization_id=principal.organization_id,
+        facility_id=request.facility_id,
+        department_id=request.department_id,
+        patient=patient,
+        encounter=encounter,
+        purpose=request.purpose.strip(),
+        department=department,
+    )

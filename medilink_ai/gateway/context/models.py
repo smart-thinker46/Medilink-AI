@@ -25,6 +25,8 @@ class PatientContextRecord:
     patient_id: str
     organization_id: str
     facility_id: str
+    status: str = "ACTIVE"
+    classification_level: str = "INTERNAL"
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,15 @@ class EncounterContextRecord:
     facility_id: str
     # Optional because older HMIS APIs may not expose encounter department.
     department_id: str | None = None
+    status: str = "IN_PROGRESS"
+
+
+@dataclass(frozen=True)
+class DepartmentContextRecord:
+    department_id: str
+    organization_id: str
+    facility_id: str
+    status: str = "ACTIVE"
 
 
 @dataclass(frozen=True)
@@ -52,6 +63,7 @@ class ValidatedRequestContext:
     patient_access: ContextAccessDecision | None = None
     encounter_access: ContextAccessDecision | None = None
     validated_at: datetime | None = None
+    department: DepartmentContextRecord | None = None
 
     @property
     def patient_id(self) -> str | None:

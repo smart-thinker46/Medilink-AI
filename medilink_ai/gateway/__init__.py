@@ -30,5 +30,6 @@ from .safety import AISafetyService
 from .orchestration import GatewayOrchestrator
 from .routing import ModelRouter, ModelRegistry, RoutedAIExecutor
 from .output import AIOutputValidationService
+from .api import router as api_router
 
-__all__ = ["AICapability", "AIRiskLevel", "AuthenticatedPrincipal", "GatewayDecision", "GatewayDecisionStatus", "GatewayExecutionContext", "GatewayRequest", "authorize_gateway_request", "GatewayAuthorizationService", "CapabilityPolicy", "get_capability_policy", "ContextValidationService", "ValidatedRequestContext", "PHIProtectionService", "AISafetyService", "GatewayOrchestrator", "ModelRouter", "ModelRegistry", "RoutedAIExecutor", "AIOutputValidationService"]
+__all__ = ["AICapability", "AIRiskLevel", "AuthenticatedPrincipal", "GatewayDecision", "GatewayDecisionStatus", "GatewayExecutionContext", "GatewayRequest", "authorize_gateway_request", "GatewayAuthorizationService", "CapabilityPolicy", "get_capability_policy", "ContextValidationService", "ValidatedRequestContext", "PHIProtectionService", "AISafetyService", "GatewayOrchestrator", "ModelRouter", "ModelRegistry", "RoutedAIExecutor", "AIOutputValidationService", "api_router"]

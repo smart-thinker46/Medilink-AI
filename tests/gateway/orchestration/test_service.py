@@ -6,6 +6,8 @@ from medilink_ai.gateway import AICapability, AuthenticatedPrincipal, GatewayAut
 from medilink_ai.gateway.orchestration import GatewayExecutionStatus, GatewayOrchestrator, GatewayStage
 from medilink_ai.gateway.safety import AISafetyService
 from medilink_ai.gateway.audit import AuditService, InMemoryAuditSink
+from medilink_ai.gateway.context import (ContextAccessDecision, ContextAccessStatus, EncounterContextRecord, PatientContextRecord, ValidatedRequestContext)
+from medilink_ai.gateway.phi import PHIHandlingDecision, ProtectedAIContext
 
 
 def principal(*permissions):
@@ -22,7 +24,14 @@ class FakeContext:
     async def validate(self, *, principal, request):
         if self.fail:
             raise RuntimeError("context unavailable")
-        return {"organization_id": principal.organization_id, "facility_id": request.facility_id}
+        patient = PatientContextRecord(request.patient_id, principal.organization_id, request.facility_id) if request.patient_id else None
+        encounter = EncounterContextRecord(request.encounter_id, request.patient_id, principal.organization_id, request.facility_id, request.department_id) if request.encounter_id else None
+        allowed = ContextAccessDecision(ContextAccessStatus.ALLOWED)
+        return ValidatedRequestContext(
+            principal.organization_id, request.facility_id, request.department_id,
+            patient, encounter, request.purpose or "test purpose",
+            allowed if patient else None, allowed if encounter else None,
+        )
 
 
 @dataclass
@@ -32,7 +41,18 @@ class FakePHI:
     async def protect(self, *, principal, request, validated_context):
         if self.fail:
             raise RuntimeError("phi unavailable")
-        return {"text": request.query or ""}
+        return ProtectedAIContext(
+            organization_id=validated_context.organization_id,
+            facility_id=validated_context.facility_id,
+            department_id=validated_context.department_id,
+            capability=request.capability.value,
+            purpose=(request.purpose or "").strip(),
+            query=request.query or "",
+            patient_reference="patient-ref" if validated_context.patient else None,
+            encounter_reference="encounter-ref" if validated_context.encounter else None,
+            decision=PHIHandlingDecision.ALLOWED,
+            human_review_required=request.capability == AICapability.DOCUMENTATION_DRAFT,
+        )
 
 
 class FakeExecutor:
@@ -45,6 +65,7 @@ class FakeExecutor:
 
 
 def request(capability=AICapability.KNOWLEDGE_ASK, query="Explain the pharmacy procedure", **kwargs):
+    kwargs.setdefault("purpose", "Test an approved AI workflow")
     return GatewayRequest(capability=capability, module="clinical", facility_id="facility-001", query=query, **kwargs)
 
 
@@ -88,7 +109,7 @@ def test_phi_failure_is_fail_closed():
 
 
 def test_review_request_reaches_executor_with_review_flag():
-    result, executor = run(request(AICapability.DOCUMENTATION_DRAFT, "Draft a clinical note", patient_id="patient-001"), user=principal("ai:capability:documentation.draft", "ai:documentation:draft"))
+    result, executor = run(request(AICapability.DOCUMENTATION_DRAFT, "Draft a clinical note", patient_id="patient-001", encounter_id="encounter-001"), user=principal("ai:capability:documentation.draft", "ai:documentation:draft"))
     assert result.status == GatewayExecutionStatus.REVIEW_REQUIRED
     assert result.human_review_required is True
     assert executor.calls == 1

@@ -12,7 +12,7 @@ class SafetyActionClassifier:
         (AIActionType.AUTHORIZE, (r"\bauthori[sz]e\b", r"\bgrant approval\b", r"\bpermit\b")),
         (AIActionType.APPROVE, (r"\bapprove\b", r"\bapproval\b", r"\bsign[ -]?off\b")),
         (AIActionType.MODIFY, (r"\bchange\b", r"\bmodify\b", r"\bupdate\b", r"\bdelete\b", r"\boverwrite\b", r"\balter\b")),
-        (AIActionType.EXECUTE, (r"\bexecute\b", r"\bcarry out\b", r"\bcomplete the (?:discharge|refund|transfer)\b")),
+        (AIActionType.EXECUTE, (r"\bexecute\b", r"\bcarry out\b", r"\bcomplete the (?:discharge|refund|transfer)\b", r"\b(?:discharge|refund|transfer)\b.*\bautomatically\b")),
         (AIActionType.RECOMMEND, (r"\brecommend\b", r"\bsuggest\b", r"\bwhat should we do\b")),
         (AIActionType.DRAFT, (r"\bdraft\b", r"\bprepare a (?:note|report|letter)\b")),
         (AIActionType.SUMMARIZE, (r"\bsummar(?:y|ize|ise)\b", r"\bbrief(?:ly)?\b")),

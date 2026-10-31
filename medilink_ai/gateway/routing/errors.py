@@ -16,3 +16,7 @@ class ModelCapabilityError(ModelRoutingError):
 
 class ModelPolicyError(ModelRoutingError):
     pass
+
+
+class UnprotectedModelInputError(ModelRoutingError):
+    pass

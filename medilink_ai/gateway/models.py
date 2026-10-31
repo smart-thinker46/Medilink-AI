@@ -33,6 +33,9 @@ class AuthenticatedPrincipal:
     roles: frozenset[str] = frozenset()
     permissions: frozenset[str] = frozenset()
     classification_level: str = "INTERNAL"
+    # Human callers and service-to-service callers have different security
+    # semantics.  This flag is supplied by the trusted identity adapter only.
+    is_service_account: bool = False
 
 
 @dataclass(frozen=True)

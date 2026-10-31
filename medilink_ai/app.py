@@ -31,6 +31,8 @@ from .knowledge.hybrid_schemas import HybridSearchRequest, HybridSearchResponse,
 from .knowledge.retrieval_pipeline import KnowledgeRetrievalPipeline
 from .knowledge.assistant_service import HospitalKnowledgeAssistant
 from .knowledge.assistant_schemas import KnowledgeAssistantRequest, KnowledgeAssistantResponse
+from .gateway.api import router as ai_gateway_router
+from .gateway.identity import create_identity_provider
 
 
 class NoteReq(BaseModel):
@@ -92,6 +94,10 @@ def create_app(settings: Settings | None = None, llm=None, hmis=None) -> FastAPI
     limiter = RateLimiter(s.request_rate_per_minute)
     gw = Gateway(s, llm, authz, ContextBuilder(demo_hmis), audit, kb)
     app = FastAPI(title="Medilink AI Gateway", version="0.1.0")
+    # The gateway consumes a principal established by trusted Medilink
+    # middleware. It never authenticates browser headers or request-body claims.
+    app.state.identity_provider = create_identity_provider()
+    app.include_router(ai_gateway_router)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(s.cors_origins),

@@ -12,6 +12,12 @@ from ..output.service import AIOutputValidationService
 from ..audit.builder import build_gateway_audit_event
 from ..audit.models import AuditEventType, AuditOutcome, AuditSeverity
 from ..audit.service import AuditService
+from ..context.models import ContextAccessStatus, ValidatedRequestContext
+from ..phi.exceptions import PHIDataProviderUnavailableError, PHIQueryInspectionError, PHIPolicyError, PHIValidationError
+from ..phi.models import PHIHandlingDecision, ProtectedAIContext
+from ..phi.policies import get_phi_policy as get_projection_policy
+from ..phi.validator import validate_protected_context
+from ..routing.models import ProtectedModelInput
 from .models import GatewayExecutionStatus, GatewayStage, OrchestrationResult, StageResult
 from .stages import StageTimer
 
@@ -116,12 +122,19 @@ class GatewayOrchestrator:
             return self._result(request, GatewayExecutionStatus.BLOCKED, stages, reasons, principal=principal)
         stages.append(context_timer.finish(GatewayExecutionStatus.COMPLETED))
 
-        # Context service is the trusted source of patient/encounter access.
+        if not isinstance(context, ValidatedRequestContext):
+            reasons = ("CANONICAL_CONTEXT_REQUIRED",)
+            stages[-1] = StageResult(GatewayStage.CONTEXT_VALIDATION, GatewayExecutionStatus.BLOCKED, reasons, stages[-1].duration_ms)
+            return self._result(request, GatewayExecutionStatus.BLOCKED, stages, reasons, principal=principal)
+        patient_access = context.patient_access
+        encounter_access = context.encounter_access
+        patient_verified = patient_access is not None and patient_access.status == ContextAccessStatus.ALLOWED
+        encounter_verified = encounter_access is not None and encounter_access.status == ContextAccessStatus.ALLOWED
         final = self.authorization_service.authorize(
             principal,
             request,
-            patient_access_verified=bool(request.patient_id),
-            encounter_access_verified=bool(request.encounter_id),
+            patient_access_verified=patient_verified,
+            encounter_access_verified=encounter_verified,
         )
         if final.status != GatewayDecisionStatus.ALLOWED:
             reasons = tuple(final.reason_codes) or ("AUTHORIZATION_FAILED",)
@@ -132,15 +145,46 @@ class GatewayOrchestrator:
         timer = StageTimer(GatewayStage.PHI_PROTECTION); timer.start()
         try:
             protected = await self._protect(principal, request, context)
+        except PHIDataProviderUnavailableError:
+            reasons = ("PHI_PROVIDER_FAILED",)
+            stages.append(timer.finish(GatewayExecutionStatus.BLOCKED, reasons))
+            return self._result(request, GatewayExecutionStatus.BLOCKED, stages, reasons, principal=principal)
+        except PHIQueryInspectionError:
+            reasons = ("PHI_QUERY_INSPECTION_FAILED",)
+            stages.append(timer.finish(GatewayExecutionStatus.BLOCKED, reasons))
+            return self._result(request, GatewayExecutionStatus.BLOCKED, stages, reasons, principal=principal)
+        except PHIPolicyError:
+            reasons = ("PHI_POLICY_MISSING",)
+            stages.append(timer.finish(GatewayExecutionStatus.BLOCKED, reasons))
+            return self._result(request, GatewayExecutionStatus.BLOCKED, stages, reasons, principal=principal)
+        except (PHIValidationError, ValueError):
+            reasons = ("PHI_VALIDATION_FAILED",)
+            stages.append(timer.finish(GatewayExecutionStatus.BLOCKED, reasons))
+            return self._result(request, GatewayExecutionStatus.BLOCKED, stages, reasons, principal=principal)
         except Exception:
             reasons = ("PHI_PROTECTION_FAILED",)
             stages.append(timer.finish(GatewayExecutionStatus.BLOCKED, reasons))
             return self._result(request, GatewayExecutionStatus.BLOCKED, stages, reasons, principal=principal)
-        stages.append(timer.finish(GatewayExecutionStatus.COMPLETED))
+        try:
+            self._validate_protected_context(protected=protected, request=request, validated_context=context)
+            protected_query = self._protected_query(protected)
+        except Exception:
+            reasons = ("PHI_VALIDATION_FAILED",)
+            stages.append(timer.finish(GatewayExecutionStatus.BLOCKED, reasons))
+            return self._result(request, GatewayExecutionStatus.BLOCKED, stages, reasons, principal=principal)
+        phi_review = protected.human_review_required
+        execution_request = request.model_copy(update={"query": protected_query})
+        try:
+            model_input = ProtectedModelInput.from_protected_context(protected)
+        except Exception:
+            reasons = ("PHI_MODEL_INPUT_INVALID",)
+            stages.append(timer.finish(GatewayExecutionStatus.BLOCKED, reasons))
+            return self._result(request, GatewayExecutionStatus.BLOCKED, stages, reasons, principal=principal)
+        stages.append(timer.finish(GatewayExecutionStatus.REVIEW_REQUIRED if phi_review else GatewayExecutionStatus.COMPLETED))
 
         timer = StageTimer(GatewayStage.SAFETY_CLASSIFICATION); timer.start()
         try:
-            safety = self.safety_service.classify(request.capability, request.query or "")
+            safety = self.safety_service.classify(request.capability, protected_query)
         except Exception:
             reasons = ("SAFETY_CLASSIFICATION_FAILED",)
             stages.append(timer.finish(GatewayExecutionStatus.BLOCKED, reasons))
@@ -149,12 +193,12 @@ class GatewayOrchestrator:
             reason = (safety.reason_code,)
             stages.append(timer.finish(GatewayExecutionStatus.BLOCKED, reason))
             return self._result(request, GatewayExecutionStatus.BLOCKED, stages, reason, principal=principal)
-        review = safety.decision == AISafetyDecision.REVIEW_REQUIRED or safety.requires_human_review
+        review = phi_review or safety.decision == AISafetyDecision.REVIEW_REQUIRED or safety.requires_human_review
         stages.append(timer.finish(GatewayExecutionStatus.REVIEW_REQUIRED if review else GatewayExecutionStatus.COMPLETED, (safety.reason_code,)))
 
         timer = StageTimer(GatewayStage.EXECUTION); timer.start()
         try:
-            output = await self.executor.execute(request=request, principal=principal, validated_context=context, protected_request=protected)
+            output = await self.executor.execute(request=execution_request, principal=principal, validated_context=context, protected_request=model_input)
         except Exception:
             reasons = ("AI_EXECUTION_FAILED",)
             stages.append(timer.finish(GatewayExecutionStatus.FAILED, reasons))
@@ -178,13 +222,33 @@ class GatewayOrchestrator:
         overall = GatewayExecutionStatus.REVIEW_REQUIRED if review else GatewayExecutionStatus.COMPLETED
         return self._result(request, overall, stages, (), review, output, principal)
 
-    async def _protect(self, principal: AuthenticatedPrincipal, request: GatewayRequest, context: Any) -> Any:
+    async def _protect(self, principal: AuthenticatedPrincipal, request: GatewayRequest, context: ValidatedRequestContext) -> ProtectedAIContext:
         protect = getattr(self.phi_service, "protect", None)
-        if protect is not None:
-            result = protect(principal=principal, request=request, validated_context=context)
-        else:
-            result = self.phi_service.protect_text(capability=request.capability, text=request.query or "")
-        return await result if inspect.isawaitable(result) else result
+        if not callable(protect):
+            raise PHIValidationError("A structured PHI protection service is required.")
+        result = protect(principal=principal, request=request, validated_context=context)
+        result = await result if inspect.isawaitable(result) else result
+        if not isinstance(result, ProtectedAIContext):
+            raise PHIValidationError("PHI protection returned an unsupported context type.")
+        return result
+
+    @staticmethod
+    def _protected_query(protected: ProtectedAIContext) -> str:
+        value = protected.query
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("PHI protection did not return an inspected query.")
+        return value
+
+    @staticmethod
+    def _validate_protected_context(*, protected: ProtectedAIContext, request: GatewayRequest, validated_context: ValidatedRequestContext) -> None:
+        policy = get_projection_policy(request.capability.value)
+        validate_protected_context(policy=policy, context=protected)
+        if protected.organization_id != validated_context.organization_id or protected.facility_id != validated_context.facility_id or protected.department_id != validated_context.department_id:
+            raise PHIValidationError("Protected context scope does not match validated context.")
+        if protected.capability != request.capability.value or protected.purpose != (request.purpose or "").strip():
+            raise PHIValidationError("Protected context does not match the request.")
+        if protected.decision != PHIHandlingDecision.ALLOWED:
+            raise PHIValidationError("Protected context is not approved for inference.")
 
     async def orchestrate(self, *, principal: AuthenticatedPrincipal, request: GatewayRequest) -> OrchestrationResult:
         return await self.execute(principal=principal, request=request)

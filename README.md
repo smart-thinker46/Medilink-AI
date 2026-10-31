@@ -74,6 +74,25 @@ loopback, private-network addresses, or explicitly allow-listed; public AI APIs
 are rejected.
 
 ## Production Medilink integration
+The AI Gateway does not own Medilink users, passwords, sessions, roles, or
+facility membership. A trusted Medilink authentication boundary must establish
+`request.state.authenticated_principal`; the gateway validates that canonical
+principal and applies its own capability and safety policy. It never trusts
+identity fields from a request body or arbitrary `X-*` header, and credentials
+are never sent to the model or audit payload.
+
+The provider-neutral boundary is implemented in
+`gateway/identity/{claims,validation,adapter,factory}.py`. Until the actual
+Medilink authentication protocol is selected, the only provider is the trusted
+request-state adapter:
+
+    export MEDILINK_IDENTITY_PROVIDER=request_state
+
+Production startup requires this explicit provider configuration and fails
+closed if it is absent. JWT/OIDC/session decoding is deliberately not invented
+here; the real Medilink security implementation must supply verified claims and
+map them to `IdentityClaims` before calling `MedilinkIdentityAdapter`.
+
 Set `MEDILINK_AUTH_MODE=medilink`, `MEDILINK_BACKEND_URL` to the private Medilink API address,
 and optionally `MEDILINK_BACKEND_ALLOWED_HOSTS` for a private DNS name. The gateway requires a
 normal `Authorization: Bearer <Medilink JWT>` header and uses `/security/access/me` plus
@@ -83,6 +102,57 @@ privileged AI account. Patient visibility is therefore enforced by Medilink itse
 Production requests should be made with the logged-in user's bearer token. Configure dedicated
 `ai.*` permissions in Medilink RBAC as they become available; current role mappings are a
 conservative compatibility fallback and should not be treated as a replacement for RBAC grants.
+
+### Production context integration (Step 6.14)
+
+`gateway/context` now defines the read-only HMIS provider boundary for patients,
+encounters, and departments. The provider resolves records using the trusted
+organization/facility scope; `ContextValidationService` checks that the records
+belong together and asks the HMIS access authorizer for patient and encounter
+decisions. Only the resulting `ValidatedRequestContext` is passed downstream.
+
+Missing records, ownership mismatches, denied access, and provider outages all
+fail closed before PHI protection or model execution. The provider protocols are
+contracts only—the actual Medilink patient/encounter API and authorization
+implementation must be connected before production use. Cross-facility access
+and completed-encounter access require explicit capability policy; they are not
+inferred from general facility membership.
+
+### Production PHI protection (Step 6.15)
+
+`gateway/phi/policies.py` defines separate field allowlists for each capability.
+The projection path requires a `ValidatedRequestContext`, a trusted query
+inspector, and a source-level HMIS projection provider. Returned fields are
+checked again, nested/unbounded values and oversized text are rejected, and
+the resulting `ProtectedAIContext` contains only the approved projection and
+an inspected query. Patient and encounter identifiers are represented by
+request-scoped references; they are not anonymization or a replacement for
+transport and retention controls.
+
+If policy lookup, query inspection, projection retrieval, or final manifest
+validation fails, inference is blocked. The existing text redaction helpers
+remain available as a secondary defense, but they do not replace source-level
+field selection.
+
+### PHI orchestration boundary (Step 6.16)
+
+The Gateway orchestrator requires the canonical `ValidatedRequestContext` and a
+structured `ProtectedAIContext`. It revalidates protected capability,
+tenant/facility/department scope, purpose, decision, field manifest, and query
+before proceeding. It rejects text-only PHI services, legacy context mappings,
+and uninspected-query fallbacks.
+
+Before dispatch, the Gateway creates a separate `ProtectedModelInput`. The
+inference adapter receives only the selected model name, request correlation ID,
+and minimized model input. It does not receive the authenticated principal, the
+original `GatewayRequest`, raw patient/encounter IDs, or unrestricted HMIS
+context. PHI provider, query-inspection, policy, and validation failures stop
+the pipeline before inference, while human-review requirements are preserved.
+
+The HMIS projection provider and trusted query inspector remain deployment
+adapters. They must be connected to the actual Medilink read-only APIs before
+patient-specific inference is enabled. The local regex detector is defense in
+depth, not complete PHI discovery or anonymization.
 
 Every successful AI response includes model version, evidence count, source references and an
 evidence-strength label. Generated clinical text is not duplicated in the audit database: audit

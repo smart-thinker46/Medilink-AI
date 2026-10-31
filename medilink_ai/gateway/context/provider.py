@@ -5,6 +5,7 @@ from typing import Protocol
 from ..models import AuthenticatedPrincipal
 from .models import (
     ContextAccessDecision,
+    DepartmentContextRecord,
     EncounterContextRecord,
     PatientContextRecord,
 )
@@ -13,10 +14,13 @@ from .models import (
 class HMISContextProvider(Protocol):
     """Read-only interface to authoritative Medilink context services."""
 
-    async def get_patient(self, patient_id: str) -> PatientContextRecord | None:
+    async def get_patient(self, patient_id: str, organization_id: str | None = None) -> PatientContextRecord | None:
         ...
 
-    async def get_encounter(self, encounter_id: str) -> EncounterContextRecord | None:
+    async def get_encounter(self, encounter_id: str, organization_id: str | None = None) -> EncounterContextRecord | None:
+        ...
+
+    async def get_department(self, department_id: str, organization_id: str, facility_id: str) -> DepartmentContextRecord | None:
         ...
 
 
@@ -38,3 +42,6 @@ class PatientEncounterAccessAuthorizer(Protocol):
         purpose: str,
     ) -> ContextAccessDecision:
         ...
+
+
+PatientAccessAuthorizer = PatientEncounterAccessAuthorizer

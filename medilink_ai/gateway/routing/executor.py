@@ -4,13 +4,13 @@ from typing import Any, Protocol
 
 from ..models import AuthenticatedPrincipal
 from ..schemas import GatewayRequest
-from .errors import NoModelAvailableError
-from .models import ModelRoutingRequest
+from .errors import NoModelAvailableError, UnprotectedModelInputError
+from .models import ModelRoutingRequest, ProtectedModelInput
 from .router import ModelRouter
 
 
 class InferenceExecutor(Protocol):
-    async def generate(self, *, model_name: str, request: GatewayRequest, principal: AuthenticatedPrincipal, validated_context: Any, protected_request: Any) -> Any:
+    async def generate(self, *, model_name: str, request_id: str, model_input: ProtectedModelInput) -> Any:
         ...
 
 
@@ -24,4 +24,6 @@ class RoutedAIExecutor:
         decision = self.router.route(model_request)
         if decision.model is None:
             raise NoModelAvailableError(decision.reason_code)
-        return await self.inference_executor.generate(model_name=decision.model.model_name, request=request, principal=principal, validated_context=validated_context, protected_request=protected_request)
+        if not isinstance(protected_request, ProtectedModelInput):
+            raise UnprotectedModelInputError("Inference requires a ProtectedModelInput.")
+        return await self.inference_executor.generate(model_name=decision.model.model_name, request_id=str(request.request_id), model_input=protected_request)

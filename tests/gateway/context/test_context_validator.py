@@ -2,6 +2,7 @@ import pytest
 
 from medilink_ai.gateway import AuthenticatedPrincipal, GatewayRequest
 from medilink_ai.gateway.context import (
+    DepartmentContextRecord,
     EncounterContextRecord,
     GatewayContextValidator,
     PatientContextRecord,
@@ -43,6 +44,14 @@ def test_valid_relationships_are_accepted(principal):
     GatewayContextValidator.validate_principal_facility(principal, "facility-001")
     GatewayContextValidator.validate_patient_ownership(principal, request(), patient())
     GatewayContextValidator.validate_encounter_ownership(principal, request(), encounter(), patient())
+
+
+def test_department_must_belong_to_requested_facility(principal):
+    with pytest.raises(ContextValidationError) as error:
+        GatewayContextValidator.validate_department_record(
+            principal, request(), DepartmentContextRecord("clinical", "org-001", "facility-999")
+        )
+    assert error.value.reason_code == "DEPARTMENT_FACILITY_MISMATCH"
 
 
 @pytest.mark.parametrize("record_changes,code", [

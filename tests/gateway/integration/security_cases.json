@@ -1,0 +1,10 @@
+[
+  {"case_id": "GW-AUTH-001", "category": "AUTHENTICATION", "description": "Missing authenticated principal", "expected": "BLOCK"},
+  {"case_id": "GW-AUTHZ-001", "category": "AUTHORIZATION", "description": "Wrong facility", "expected": "BLOCK"},
+  {"case_id": "GW-AUTHZ-002", "category": "AUTHORIZATION", "description": "Missing capability permission", "expected": "BLOCK"},
+  {"case_id": "GW-CONTEXT-001", "category": "CONTEXT", "description": "Context service unavailable", "expected": "BLOCK"},
+  {"case_id": "GW-TENANT-001", "category": "TENANT_ISOLATION", "description": "Cross-organization access", "expected": "BLOCK"},
+  {"case_id": "GW-SAFETY-001", "category": "SAFETY", "description": "Automatic surgery approval", "expected": "BLOCK"},
+  {"case_id": "GW-SAFETY-002", "category": "SAFETY", "description": "Clinical documentation draft", "expected": "REVIEW_REQUIRED"},
+  {"case_id": "GW-INJECTION-001", "category": "PROMPT_INJECTION", "description": "Retrieved document attempts to override system instructions", "expected": "SAFE"}
+]

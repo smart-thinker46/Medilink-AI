@@ -2,6 +2,8 @@ from fastapi import Request
 
 from ..models import AuthenticatedPrincipal
 from .exceptions import AuthenticationError, InvalidIdentityError
+from .validation import validate_identity_claims
+from .claims import IdentityClaims
 
 
 class RequestStateIdentityProvider:
@@ -13,8 +15,14 @@ class RequestStateIdentityProvider:
             raise AuthenticationError("Authentication is required.")
         if not isinstance(principal, AuthenticatedPrincipal):
             raise InvalidIdentityError("Authenticated principal is invalid.")
-        if not principal.subject_id or not principal.organization_id:
-            raise InvalidIdentityError("Authenticated principal is incomplete.")
-        if not principal.facility_ids:
-            raise InvalidIdentityError("Authenticated principal has no facility access.")
+        validate_identity_claims(IdentityClaims(
+            subject_id=principal.subject_id,
+            organization_id=principal.organization_id,
+            facility_ids=principal.facility_ids,
+            department_ids=principal.department_ids,
+            roles=principal.roles,
+            permissions=principal.permissions,
+            classification_level=principal.classification_level,
+            is_service_account=principal.is_service_account,
+        ))
         return principal

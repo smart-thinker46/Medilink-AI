@@ -12,6 +12,32 @@ class PHILevel(str, Enum):
     RESTRICTED = "RESTRICTED"
 
 
+class DataSensitivity(str, Enum):
+    PUBLIC = "PUBLIC"
+    INTERNAL = "INTERNAL"
+    CONFIDENTIAL = "CONFIDENTIAL"
+    RESTRICTED = "RESTRICTED"
+
+
+class PHIHandlingDecision(str, Enum):
+    ALLOWED = "ALLOWED"
+    BLOCKED = "BLOCKED"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+
+
+@dataclass(frozen=True)
+class PHIProtectionPolicy:
+    capability: str
+    allowed_patient_fields: frozenset[str]
+    allowed_encounter_fields: frozenset[str]
+    allowed_query_types: frozenset[str]
+    maximum_records: int = 1
+    requires_patient_context: bool = False
+    requires_encounter_context: bool = False
+    human_review_required: bool = False
+    maximum_field_characters: int = 4000
+
+
 class PHIType(str, Enum):
     PATIENT_NAME = "PATIENT_NAME"
     PHONE = "PHONE"
@@ -85,6 +111,20 @@ class AIContextField:
 @dataclass(frozen=True)
 class ProtectedAIContext:
     fields: tuple[AIContextField, ...] = field(default_factory=tuple)
+    organization_id: str = ""
+    facility_id: str = ""
+    department_id: str | None = None
+    capability: str = ""
+    purpose: str = ""
+    query: str = ""
+    patient_reference: str | None = None
+    encounter_reference: str | None = None
+    patient_data: dict = field(default_factory=dict)
+    encounter_data: dict = field(default_factory=dict)
+    included_patient_fields: tuple[str, ...] = ()
+    included_encounter_fields: tuple[str, ...] = ()
+    decision: PHIHandlingDecision = PHIHandlingDecision.ALLOWED
+    human_review_required: bool = False
 
     @property
     def allowed_fields(self) -> tuple[AIContextField, ...]:

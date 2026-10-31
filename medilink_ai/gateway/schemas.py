@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .models import AICapability
 
 
 class GatewayRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     request_id: UUID = Field(default_factory=uuid4)
     capability: AICapability
     module: str = Field(min_length=2, max_length=100)

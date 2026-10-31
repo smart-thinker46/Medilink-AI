@@ -1,18 +1,20 @@
-from .exceptions import ContextAuthorizationUnavailableError, ContextProviderUnavailableError, ContextValidationError
+from .exceptions import (ContextAuthorizationError, ContextAuthorizationUnavailableError, ContextIntegrationError,
+                         ContextNotFoundError, ContextProviderUnavailableError, ContextValidationError)
 from .models import (
     ContextAccessDecision,
     ContextAccessStatus,
     EncounterContextRecord,
+    DepartmentContextRecord,
     PatientContextRecord,
     ValidatedRequestContext,
 )
-from .provider import HMISContextProvider, PatientEncounterAccessAuthorizer
-from .service import ContextValidationService
-from .validator import GatewayContextValidator
+from .provider import HMISContextProvider, PatientAccessAuthorizer, PatientEncounterAccessAuthorizer
+from .service import ContextIntegrationService, ContextValidationService
+from .validator import GatewayContextValidator, validate_context_records
 
 __all__ = [
-    "ContextAccessDecision", "ContextAccessStatus", "EncounterContextRecord", "PatientContextRecord",
-    "ValidatedRequestContext", "HMISContextProvider", "PatientEncounterAccessAuthorizer",
-    "ContextValidationService", "GatewayContextValidator", "ContextValidationError",
-    "ContextProviderUnavailableError", "ContextAuthorizationUnavailableError",
+    "ContextAccessDecision", "ContextAccessStatus", "EncounterContextRecord", "PatientContextRecord", "DepartmentContextRecord",
+    "ValidatedRequestContext", "HMISContextProvider", "PatientEncounterAccessAuthorizer", "PatientAccessAuthorizer",
+    "ContextValidationService", "ContextIntegrationService", "GatewayContextValidator", "validate_context_records", "ContextValidationError",
+    "ContextIntegrationError", "ContextNotFoundError", "ContextAuthorizationError", "ContextProviderUnavailableError", "ContextAuthorizationUnavailableError",
 ]

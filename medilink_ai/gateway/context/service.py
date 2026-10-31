@@ -18,9 +18,13 @@ from .validator import GatewayContextValidator
 class ContextValidationService:
     """Retrieves authoritative context, validates ownership, then access."""
 
-    def __init__(self, context_provider: HMISContextProvider, access_authorizer: PatientEncounterAccessAuthorizer):
-        self.context_provider = context_provider
-        self.access_authorizer = access_authorizer
+    def __init__(self, context_provider: HMISContextProvider | None = None, access_authorizer: PatientEncounterAccessAuthorizer | None = None, *, provider: HMISContextProvider | None = None, authorizer: PatientEncounterAccessAuthorizer | None = None):
+        self.context_provider = context_provider or provider
+        self.access_authorizer = access_authorizer or authorizer
+        if self.context_provider is None:
+            raise ValueError("An HMIS context provider is required.")
+        if self.access_authorizer is None:
+            raise ValueError("A patient access authorizer is required.")
 
     async def validate(self, principal: AuthenticatedPrincipal, request: GatewayRequest) -> ValidatedRequestContext:
         GatewayContextValidator.validate_principal_facility(principal, request.facility_id)
@@ -34,7 +38,7 @@ class ContextValidationService:
         encounter = None
         if request.patient_id:
             try:
-                patient = await self.context_provider.get_patient(request.patient_id)
+                patient = await self._provider_call("get_patient", request.patient_id, principal.organization_id)
             except Exception as exc:
                 raise ContextProviderUnavailableError() from exc
             if patient is None:
@@ -43,7 +47,7 @@ class ContextValidationService:
 
         if request.encounter_id:
             try:
-                encounter = await self.context_provider.get_encounter(request.encounter_id)
+                encounter = await self._provider_call("get_encounter", request.encounter_id, principal.organization_id)
             except Exception as exc:
                 raise ContextProviderUnavailableError() from exc
             if encounter is None:
@@ -51,6 +55,18 @@ class ContextValidationService:
             GatewayContextValidator.validate_encounter_ownership(principal, request, encounter, patient)
 
         GatewayContextValidator.validate_department(principal, request, encounter)
+        department = None
+        if request.department_id:
+            getter = getattr(self.context_provider, "get_department", None)
+            if getter is not None:
+                try:
+                    department = await getter(request.department_id, principal.organization_id, request.facility_id)
+                except Exception as exc:
+                    raise ContextProviderUnavailableError() from exc
+                if department is None:
+                    raise ContextValidationError("The supplied context could not be validated.", "DEPARTMENT_NOT_FOUND")
+            elif request.department_id not in principal.department_ids:
+                raise ContextValidationError("The supplied context could not be validated.", "DEPARTMENT_NOT_AUTHORIZED")
         patient_access = None
         encounter_access = None
         try:
@@ -74,8 +90,18 @@ class ContextValidationService:
             purpose=request.purpose.strip(),
             patient_access=patient_access,
             encounter_access=encounter_access,
+            department=department,
             validated_at=datetime.now(timezone.utc),
         )
+
+    async def _provider_call(self, method_name: str, identifier: str, organization_id: str):
+        method = getattr(self.context_provider, method_name)
+        try:
+            return await method(identifier, organization_id)
+        except TypeError:
+            # Compatibility for existing local adapters while all production
+            # providers migrate to organization-scoped method signatures.
+            return await method(identifier)
 
     # Explicit aliases keep call sites readable while preserving one implementation.
     async def validate_context(self, principal: AuthenticatedPrincipal, request: GatewayRequest) -> ValidatedRequestContext:
@@ -88,3 +114,6 @@ class ContextValidationService:
     def _require_allowed(decision: ContextAccessDecision, reason: str) -> None:
         if not isinstance(decision, ContextAccessDecision) or decision.status != ContextAccessStatus.ALLOWED:
             raise ContextValidationError("The supplied context could not be validated.", reason)
+
+
+ContextIntegrationService = ContextValidationService
