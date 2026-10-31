@@ -7,7 +7,7 @@ from pathlib import Path
 from .access import KnowledgeAccessContext
 from .authorization import is_chunk_authorized
 from .models import DocumentMetadata, KnowledgeChunk
-from .embeddings import EmbeddingService
+from .embeddings import get_embedding_service
 
 
 @dataclass
@@ -54,7 +54,7 @@ def _score_chunk(query: str, chunk: KnowledgeChunk) -> float:
     title_tokens = set(re.findall(r"\w+", chunk.metadata.title.lower()))
     score += sum(0.5 for token in query_tokens if token in title_tokens)
     keyword_score = score / math.sqrt(len(tokens))
-    semantic_score = EmbeddingService().similarity(query, chunk.text)
+    semantic_score = get_embedding_service().similarity(query, chunk.text)
     return (0.65 * keyword_score) + (0.35 * semantic_score)
 
 

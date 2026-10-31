@@ -8,6 +8,11 @@ _VERBS = (r"prescribe|discharge|diagnose|approve|authori[sz]e|release|order|star
           r"change|alter|edit|delete|modify|post|override|transfuse|operate")
 COMMAND_RE = re.compile(rf"^\s*(please\s+|can you\s+|could you\s+|go ahead and\s+)?({_VERBS})\b", re.I)
 INJECTION_RE = re.compile(r"\b(ignore|disregard|forget)\b.{0,40}\b(instructions|rules|guardrails|policy)\b", re.I)
+HIGH_RISK_REQUEST_RE = re.compile(
+    r"\b(independently|automatically|without (?:human|clinician|pharmacist))\b.{0,80}"
+    r"\b(authori[sz]e|approve|discharge|dispens|prescrib|diagnos|administer)\w*\b",
+    re.I,
+)
 DIRECTIVE_RE = re.compile(
     r"\b(diagnosis is|diagnosed with|patient has (sepsis|pneumonia|malaria)|"
     r"you should (start|stop|give|administer|prescribe)|start (treatment|antibiotics|therapy)|"
@@ -15,7 +20,8 @@ DIRECTIVE_RE = re.compile(
 CITE_RE = re.compile(r"\[([SD]\d+)\]")
 
 REFUSAL = ("Medilink AI is advisory only. It cannot prescribe, diagnose, discharge, approve, change records "
-           "or override controls. Use the relevant Medilink module; I can summarise, explain or flag items for review.")
+           "or override controls. A qualified human clinician or pharmacist must review and authorize clinical "
+           "decisions. Use the relevant Medilink module; I can summarise, explain or flag items for review.")
 
 
 @dataclass
@@ -26,7 +32,7 @@ class Validation:
 
 def check_request(text: str) -> str | None:
     """Return a refusal message for command-style or injection requests, else None."""
-    if COMMAND_RE.search(text) or INJECTION_RE.search(text):
+    if COMMAND_RE.search(text) or INJECTION_RE.search(text) or HIGH_RISK_REQUEST_RE.search(text):
         return REFUSAL
     return None
 

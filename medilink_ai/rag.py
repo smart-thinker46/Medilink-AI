@@ -11,7 +11,7 @@ import json
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from .knowledge.embeddings import EmbeddingService
+from .knowledge.embeddings import get_embedding_service
 
 STOP = set("a an the of to for in on and or is are be what how do i we it this that with at by from as".split())
 PRIVILEGED_ROLES = {"super_admin", "hospital_admin", "facility_admin", "tenant_admin", "administrator", "admin"}
@@ -37,7 +37,7 @@ class Chunk:
 class KnowledgeIndex:
     def __init__(self):
         self.chunks: list = []
-        self.embedder = EmbeddingService()
+        self.embedder = get_embedding_service()
 
     def load_dir(self, directory: str) -> int:
         for p in sorted(Path(directory).glob("*.md")):

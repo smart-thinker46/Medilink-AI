@@ -133,9 +133,22 @@ class MockLLM:
             body = {s: "Not documented in dictation." for s in sections}
             body["History of Present Illness"] = transcript
             return "\n\n".join(f"{s}\n{t}" for s, t in body.items())
-        if "DOCUMENTS:" in prompt:
-            docs = re.findall(r"^\[(D\d+)\] (.+?) \| (.+)$", prompt, flags=re.M)
+        # Knowledge prompts use the same extractive fallback in both the
+        # legacy JSON path and the current authorized-evidence path. Keeping
+        # this deterministic makes local testing useful without Ollama.
+        if "AUTHORIZED EVIDENCE:" in prompt or "DOCUMENTS:" in prompt:
+            docs = re.findall(
+                r"^\[(D\d+)\]\s+(.+?)\s+\|\s+(.*?)(?=^\[D\d+\]|\Z)",
+                prompt,
+                flags=re.M | re.S,
+            )
             if docs:
-                did, title, text = docs[0]
-                return f"According to {title}: {text.split('. ')[0].strip().rstrip('.')}. [{did}]"
+                did, reference, text = docs[0]
+                # Evidence paragraphs may retain Markdown headings. Do not
+                # mistake a heading for the answer when exercising the local
+                # deterministic model.
+                body = re.sub(r"(?m)^\s*#+\s*[^\n]*\n?", "", text).strip()
+                sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", body) if part.strip()]
+                answer = " ".join(sentences[:2]).rstrip(".") or body
+                return f"According to {reference}: {answer}. [{did}]"
         return "No output."

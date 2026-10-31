@@ -9,14 +9,14 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from .access import KnowledgeAccessContext
 from .authorization import is_chunk_authorized
-from .embeddings import EmbeddingService
+from .embeddings import EmbeddingProvider, get_embedding_service
 from .models import DocumentMetadata, KnowledgeChunk
 
 
 class PostgresKnowledgeStore:
-    def __init__(self, connection_factory: Callable[[], object], embedder: EmbeddingService | None = None):
+    def __init__(self, connection_factory: Callable[[], object], embedder: EmbeddingProvider | None = None):
         self.connection_factory = connection_factory
-        self.embedder = embedder or EmbeddingService()
+        self.embedder = embedder or get_embedding_service()
 
     @staticmethod
     def _vector(values: Iterable[float]) -> str:

@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 import json
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -24,6 +26,11 @@ from .knowledge.schemas import DocumentMetadataRequest, IngestionResponse
 from .knowledge.access import KnowledgeAccessContext
 from .knowledge.retrieval import retrieve
 from .knowledge.retrieval_schemas import KnowledgeSearchRequest, KnowledgeSearchResponse, KnowledgeSource
+from .db.session import get_db
+from .knowledge.hybrid_schemas import HybridSearchRequest, HybridSearchResponse, HybridSearchSource
+from .knowledge.retrieval_pipeline import KnowledgeRetrievalPipeline
+from .knowledge.assistant_service import HospitalKnowledgeAssistant
+from .knowledge.assistant_schemas import KnowledgeAssistantRequest, KnowledgeAssistantResponse
 
 
 class NoteReq(BaseModel):
@@ -226,6 +233,74 @@ def create_app(settings: Settings | None = None, llm=None, hmis=None) -> FastAPI
                 score=round(result.score, 4),
             ) for result in results],
         )
+
+    @app.post("/v1/knowledge/hybrid-search", response_model=HybridSearchResponse)
+    def hybrid_search(
+        request: HybridSearchRequest,
+        identity=Depends(current_user),
+        db: Session = Depends(get_db),
+    ):
+        """Return authorized lexical and semantic knowledge matches."""
+        user, _ = identity
+        context = KnowledgeAccessContext(
+            user_id=user.id,
+            organization_id=user.facility_id or "",
+            facility_id=user.facility_id or "",
+            department_id=None,
+            roles=frozenset({user.role}),
+            classification_level="INTERNAL",
+        )
+        try:
+            results = KnowledgeRetrievalPipeline(db).search(
+                request.query,
+                context=context,
+                top_k=request.top_k,
+                candidate_limit=min(50, max(request.top_k * 5, 20)),
+            ).candidates
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except (SQLAlchemyError, RuntimeError) as exc:
+            raise HTTPException(503, "Hybrid knowledge search is temporarily unavailable.") from exc
+        return HybridSearchResponse(
+            status="success",
+            query=request.query,
+            results=[
+                HybridSearchSource(
+                    chunk_id=result.chunk_id,
+                    document_id=str(result.chunk.document.id),
+                    title=result.chunk.document.title,
+                    version=result.chunk.document.version,
+                    source_filename=result.chunk.document.source_filename,
+                    chunk_index=result.chunk.chunk_index,
+                    hybrid_score=round(result.score, 6),
+                    keyword_rank=result.keyword_rank,
+                    vector_rank=result.vector_rank,
+                )
+                for result in results
+            ],
+        )
+
+    @app.post("/v1/knowledge/ask", response_model=KnowledgeAssistantResponse)
+    async def ask_hospital_knowledge(
+        request: KnowledgeAssistantRequest,
+        identity=Depends(current_user),
+        db: Session = Depends(get_db),
+    ):
+        """Generate a structured, cited answer from authorized evidence."""
+        user, _ = identity
+        context = KnowledgeAccessContext(
+            user_id=user.id,
+            organization_id=user.facility_id or "",
+            facility_id=user.facility_id or "",
+            department_id=None,
+            roles=frozenset({user.role}),
+            classification_level="INTERNAL",
+        )
+        try:
+            answer = await HospitalKnowledgeAssistant(db).ask(request.query, context)
+        except (SQLAlchemyError, RuntimeError) as exc:
+            raise HTTPException(503, "Grounded knowledge generation is temporarily unavailable.") from exc
+        return KnowledgeAssistantResponse(**answer.model_dump())
 
     @app.post("/v1/human-action")
     def human(req: ActionReq, identity=Depends(current_user)):
